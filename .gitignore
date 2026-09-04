@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.secrets/
+.local/
+credentials.json
+client_secret*.json
+token.json
+token_*.json
