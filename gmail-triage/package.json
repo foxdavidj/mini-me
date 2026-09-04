@@ -1,0 +1,43 @@
+{
+  "name": "mini-me-gmail-triage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.4.1",
+  "engines": {
+    "bun": ">=1.4.1"
+  },
+  "scripts": {
+    "start": "HOST=127.0.0.1 PORT=8765 bun .output/server/index.mjs",
+    "connection-link": "bun src/connection.ts --connection-link",
+    "inspect": "bun src/inspect.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "dev": "bun --bun vite",
+    "build": "bun --bun vite build",
+    "review": "bun src/run-review.ts",
+    "schedule": "bun src/schedule.ts",
+    "install-service": "bun src/install-service.ts",
+    "smoke": "bun scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.32",
+    "@tanstack/react-start": "^1.168.49",
+    "google-auth-library": "^10.3.0",
+    "html-to-text": "^10.0.1",
+    "react": "19",
+    "react-dom": "19",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.1",
+    "@types/html-to-text": "^9.0.4",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "nitro": "^3.0.260903-beta",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  }
+}

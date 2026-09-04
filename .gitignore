@@ -4,7 +4,17 @@
 !.env.example
 .secrets/
 .local/
+.tmp/
 credentials.json
 client_secret*.json
 token.json
 token_*.json
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+*.sqlite
+*.sqlite-*
+dist/
+.output/
+.tanstack/
