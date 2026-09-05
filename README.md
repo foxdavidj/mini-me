@@ -6,6 +6,6 @@ Each subproject lives in its own directory with a short README explaining its pu
 
 Prefer Bun and strict TypeScript for new projects, with SQLite when local persistence is needed. Use Python only when a specific library or workflow calls for it.
 
-First project: [Gmail triage](gmail-triage/) across multiple accounts. A private Tailscale dashboard reviews unread inbox mail, highlights tasks, summarizes newsletters, and supports approved archive batches with restore. Daily reviews run at 6 a.m. Pacific on the Mac.
+First project: [Gmail triage](gmail-triage/) across multiple accounts. A personal agent reads mail, investigates context, archives unnecessary messages, and asks only questions that need an answer. A private Tailscale dashboard accepts answers and provides archive/restore controls. Reviews run daily at 6 a.m. Pacific on the Mac, with learned preferences stored privately.
 
 Keep credentials, account tokens, and private runtime data out of Git.

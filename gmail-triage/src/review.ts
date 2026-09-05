@@ -32,6 +32,7 @@ export class Reviews {
         key TEXT PRIMARY KEY, email TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS question_answers (id INTEGER PRIMARY KEY, key TEXT NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, answered_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS review_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
     `);
   }
@@ -57,6 +58,14 @@ export class Reviews {
     }));
   }
   status(email:string,id:string,status:string) { this.store.db.query("UPDATE review_items SET status=? WHERE email=? AND id=?").run(status,email,id); }
+  answer(key:string, answer:string) {
+    return this.store.db.transaction(()=>{
+      const item=this.items().find(x=>x.key===key&&x.status==='pending'&&x.category==='attention');
+      if(!item)throw Error('Question is no longer pending');
+      this.store.db.query('INSERT INTO question_answers(key,question,answer,answered_at) VALUES (?,?,?,?)').run(key,item.summary,answer,new Date().toISOString());
+      this.status(item.email,item.id,'answered');
+    })();
+  }
   snapshot() {
     // A crashed web process may have changed Gmail without recording the response.
     // Keep those operations recoverable rather than permanently showing them busy.
@@ -66,11 +75,12 @@ export class Reviews {
     })();
     return {
       items:this.items(),
+      answers:this.store.db.query("SELECT key,question,answer,answered_at FROM question_answers ORDER BY id DESC").all(),
       runs:this.store.db.query("SELECT * FROM review_runs ORDER BY started_at DESC LIMIT 8").all(),
       accounts:this.store.accounts().map(x=>({email:x.email})),
       schedule:this.setting("schedule") ?? "Not scheduled",
       counts:JSON.parse(this.setting("counts") ?? "[]") as {email:string;inboxUnread:number;allUnread:number;remaining:boolean}[],
-      undo:this.store.db.query("SELECT key,email,id,state FROM archive_actions WHERE state IN ('archived','uncertain','restoring','restored') ORDER BY created_at DESC LIMIT 100").all(),
+      undo:this.store.db.query("SELECT key,email,id,state FROM archive_actions WHERE state IN ('archived','uncertain','restoring','restored') ORDER BY created_at DESC").all(),
     };
   }
 }

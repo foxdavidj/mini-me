@@ -28,6 +28,13 @@ const app=createApp({config,store,google:googleAuth(config),accessKey:accessKey(
       const message=await gmail.message(item.id);
       return Response.json({text:message.text,textTruncated:message.textTruncated});
     }
+    if (path==='/api/answer' && request.method==='POST') {
+      if(request.headers.get('Origin')!==config.origin)return new Response('Forbidden',{status:403});
+      const body=await request.text();if(body.length>16000)return new Response('Too large',{status:413});
+      const parsed=z.object({key:z.string(),answer:z.string().trim().min(1).max(8000),csrf:z.string()}).strict().safeParse(JSON.parse(body));
+      if(!parsed.success||!equal(parsed.data.csrf,session.csrf))return new Response('Forbidden',{status:403});
+      reviews.answer(parsed.data.key,parsed.data.answer);return Response.json({saved:true});
+    }
     if (path==='/api/action' && request.method==='POST') {
       if (request.headers.get('Origin')!==config.origin) return new Response('Forbidden',{status:403});
       const body=await request.text(); if(body.length>20000) return new Response('Too large',{status:413});

@@ -24,10 +24,13 @@ test('archive is applied once to the selected mailbox; undo is persistent and id
  expect(results.flat().filter(x=>x.ok)).toHaveLength(1);expect(calls).toEqual([{email:'one@example.com',id:'m1',present:false}]);
  expect((await act(r,'undo',[key],client))[0]?.ok).toBe(true);expect((await act(r,'undo',[key],client))[0]?.ok).toBe(false);expect(calls).toHaveLength(2);expect(r.items()[0]?.status).toBe('kept');store.close();
 });
-test('failed archive remains uncertain and recoverable; attention cannot be archived',async()=>{
+test('failed archive remains uncertain and recoverable; records and attention can be archived',async()=>{
  const {store,r,message,c}=setup(),key=itemKey('one@example.com','m1');
  r.save('other@example.com',[message],[{...c,category:'attention'}],'r1');const client=()=>({verify:async()=>{},inbox:async()=>{throw new Error('timeout');}});
- expect((await act(r,'archive',[itemKey('other@example.com','m1')],client))[0]?.ok).toBe(false);
+ const okClient=()=>({verify:async()=>{},inbox:async()=> 'changed' as const});
+ expect((await act(r,'archive',[itemKey('other@example.com','m1')],okClient))[0]?.ok).toBe(true);
+ r.save('records@example.com',[message],[{...c,category:'record'}],'r1');
+ expect((await act(r,'archive',[itemKey('records@example.com','m1')],okClient))[0]?.ok).toBe(true);
  expect((await act(r,'archive',[key],client))[0]?.ok).toBe(false);expect(r.items().find(x=>x.key===key)?.status).toBe('uncertain');
  const undo=await act(r,'undo',[key],()=>({verify:async()=>{},inbox:async()=> 'changed'}));expect(undo[0]?.ok).toBe(true);store.close();
 });
@@ -44,4 +47,17 @@ test('Gmail archiving changes INBOX only and skips messages already archived',as
  expect(await reader.inbox('m1',false)).toBe('changed');expect(labels).toEqual(['UNREAD','STARRED']);expect(calls[1]?.data).toEqual({removeLabelIds:['INBOX']});
  expect(await reader.inbox('m1',false)).toBe('unchanged');expect(calls.filter(x=>x.method==='POST')).toHaveLength(1);
  expect(await reader.inbox('m1',true)).toBe('changed');expect(labels).toContain('UNREAD');
+});
+
+test('answers preserve the exact question across restarts and reject stale submissions',()=>{
+ const {store,r,message,c,path}=setup();
+ r.save('questions@example.com',[message],[{...c,category:'attention',summary:'Which account should stay active?'}],'r1');
+ const key=itemKey('questions@example.com','m1');
+ r.answer(key,'Keep the work account.');
+ expect(()=>r.answer(key,'Duplicate response')).toThrow();
+ expect(()=>r.answer(itemKey('one@example.com','m1'),'Not a question')).toThrow();
+ store.close();const reopened=new Store(path),snapshot=new Reviews(reopened).snapshot();
+ expect(snapshot.answers).toHaveLength(1);
+ expect(snapshot.answers[0]).toMatchObject({key,question:'Which account should stay active?',answer:'Keep the work account.'});
+ expect(snapshot.items.find(x=>x.key===key)?.status).toBe('answered');reopened.close();
 });

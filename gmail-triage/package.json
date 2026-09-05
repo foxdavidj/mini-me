@@ -18,7 +18,8 @@
     "review": "bun src/run-review.ts",
     "schedule": "bun src/schedule.ts",
     "install-service": "bun src/install-service.ts",
-    "smoke": "bun scripts/smoke.ts"
+    "smoke": "bun scripts/smoke.ts",
+    "mail": "bun src/mail-tool.ts"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.170.32",

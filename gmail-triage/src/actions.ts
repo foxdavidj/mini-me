@@ -19,8 +19,7 @@ async function changeInbox(reviews:Reviews,item:ReviewItem,action:"archive"|"und
   const key=item.key, now=new Date().toISOString(), db=reviews.store.db;
   const claimed=db.transaction(()=>{
     if (action==='archive') {
-      if (item.category!=="archive" && item.category!=="digest") return false;
-      const changed=db.query("UPDATE review_items SET status='archiving' WHERE email=? AND id=? AND status='pending'").run(item.email,item.id);
+      const changed=db.query("UPDATE review_items SET status='archiving' WHERE email=? AND id=? AND status IN ('pending','kept','reviewed','answered','following_up')").run(item.email,item.id);
       if (!changed.changes) return false;
       db.query("INSERT INTO archive_actions VALUES (?,?,?,'archiving',?,?) ON CONFLICT(key) DO UPDATE SET state='archiving',updated_at=excluded.updated_at").run(key,item.email,item.id,now,now);
       return true;
