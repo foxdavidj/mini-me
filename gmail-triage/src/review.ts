@@ -34,6 +34,7 @@ export class Reviews {
       ) STRICT;
       CREATE TABLE IF NOT EXISTS question_answers (id INTEGER PRIMARY KEY, key TEXT NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, answered_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS review_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS label_actions (key TEXT PRIMARY KEY, labels TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
     `);
   }
   setting(key: string) { return this.store.db.query<{value:string},[string]>("SELECT value FROM review_settings WHERE key=?").get(key)?.value; }
@@ -75,6 +76,7 @@ export class Reviews {
     })();
     return {
       items:this.items(),
+      labelActions:this.store.db.query("SELECT key,labels,state,updated_at FROM label_actions ORDER BY updated_at DESC").all(),
       answers:this.store.db.query("SELECT key,question,answer,answered_at FROM question_answers ORDER BY id DESC").all(),
       runs:this.store.db.query("SELECT * FROM review_runs ORDER BY started_at DESC LIMIT 8").all(),
       accounts:this.store.accounts().map(x=>({email:x.email})),

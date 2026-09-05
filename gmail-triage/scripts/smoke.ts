@@ -8,7 +8,8 @@ try{
  const context=await browser.newContext(),page=await context.newPage();
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|violates/i.test(m.text()))errors.push('CSP failure');});
  await page.goto(origin+'/open/'+accessKey(DEFAULT_DATA),{waitUntil:'networkidle'});
- for(const label of ['Questions','Saved reading','Ready to archive','Records & other','Recent activity']){
+ if(await page.getByRole('button',{name:/^Saved reading/}).count())throw Error('Duplicate reading queue remains');
+ for(const label of ['Questions','Ready to archive','Records & other','Recent activity']){
   await page.getByRole('button',{name:new RegExp('^'+label)}).click();
   await page.getByRole('heading',{name:label,exact:true}).waitFor();
   const select=page.getByRole('checkbox',{name:'Select all'});

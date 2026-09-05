@@ -54,6 +54,8 @@ export function decodeMessage(input: unknown) {
 }
 
 export type InspectedMessage = ReturnType<typeof decodeMessage>;
+export const assistantLabelName = z.string().min(9).max(120).regex(/^Mini-me\/[^\r\n\x00-\x1f]+$/);
+const gmailLabelSchema = z.object({ id: z.string(), name: z.string(), type: z.string().optional() });
 
 const nextRead = new Map<string, number>();
 const pause = (ms:number) => new Promise<void>(resolve=>setTimeout(resolve,ms));
@@ -70,7 +72,7 @@ export async function readWithBackoff<T>(request:()=>Promise<T>, sleep=pause):Pr
   }
 }
 
-/** Only Gmail GET operations are exposed. Token refresh writes only local credentials. */
+/** Reads mail, changes inbox membership, and adds assistant-owned user labels. */
 export class GmailReader {
   private readonly oauth: OAuth2Client;
 
@@ -138,6 +140,49 @@ export class GmailReader {
   }
 
   async message(id: string) { return decodeMessage(await this.get(`messages/${encodeURIComponent(id)}`, {format:"full"})); }
+
+  async labels() {
+    return z.object({ labels: z.array(gmailLabelSchema).default([]) }).parse(await this.get('labels')).labels;
+  }
+
+  async ensureLabels(names: string[]) {
+    const requested = z.array(assistantLabelName).min(1).max(8).parse(names);
+    const existing = await this.labels();
+    const result: {id:string;name:string}[] = [];
+    for (const name of [...new Set(requested)]) {
+      let label = existing.find(x => x.name === name && x.type !== 'system');
+      if (!label) {
+        try {
+          const response = await this.oauth.request<unknown>({ method:'POST', url:'https://gmail.googleapis.com/gmail/v1/users/me/labels', data:{name,labelListVisibility:'labelShow',messageListVisibility:'show'} });
+          label = gmailLabelSchema.parse(response.data);
+          if (label.name !== name || label.type === 'system') throw Error('Unexpected Gmail label');
+        } catch (error) {
+          // A concurrent run or an ambiguous create response may have created it.
+          label = (await this.labels()).find(x => x.name === name && x.type !== 'system');
+          if (!label) throw error;
+        }
+        existing.push(label);
+      }
+      result.push({id:label.id,name});
+    }
+    return result;
+  }
+
+  async tag(id: string, names: string[]) {
+    const requested = z.array(assistantLabelName).min(1).max(8).parse(names);
+    await this.verify();
+    const path = `messages/${encodeURIComponent(id)}`;
+    const current = z.object({labelIds:z.array(z.string()).default([])}).parse(await this.get(path,{format:'minimal'}));
+    if (current.labelIds.some(x => ['TRASH','SPAM'].includes(x))) throw Error('Message moved to spam or trash');
+    const labels = await this.ensureLabels(requested);
+    const missing = labels.filter(x => !current.labelIds.includes(x.id));
+    if (missing.length) {
+      const response = await this.oauth.request<unknown>({method:'POST',url:`https://gmail.googleapis.com/gmail/v1/users/me/${path}/modify`,data:{addLabelIds:missing.map(x=>x.id)}});
+      const updated = z.object({labelIds:z.array(z.string()).default([])}).parse(response.data);
+      if (labels.some(x=>!updated.labelIds.includes(x.id))) throw Error('Gmail did not confirm labels');
+    }
+    return {labels,changed:missing.length>0};
+  }
 
   async inbox(id: string, present: boolean): Promise<"changed" | "unchanged"> {
     const path=`messages/${encodeURIComponent(id)}`;
