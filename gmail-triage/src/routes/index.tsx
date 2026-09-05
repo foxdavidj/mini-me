@@ -1,63 +1,45 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { groupMessages } from "../newsletters";
 import type { ReviewItem } from "../review";
+import { BriefText } from "../brief-text";
 
 export const Route=createFileRoute('/')({component:Dashboard});
-type Snapshot={answers:{key:string;answer:string;answered_at:string}[];items:ReviewItem[];csrf:string;schedule:string;accounts:{email:string}[];counts:{email:string;inboxUnread:number;remaining:boolean}[];runs:{id:string;started_at:string;finished_at:string|null;status:string;detail:string;processed:number}[];undo:{key:string;state:string}[];message:string|null};
+type Run={id:string;started_at:string;finished_at:string|null;status:string;detail:string;processed:number};
+type Brief={id:string;run_id:string|null;title:string;body:string;created_at:string};
+type Event={id:number;run_id:string|null;key:string;action:string;state:string;detail:string;created_at:string};
+type Snapshot={answers:{key:string;answer:string;answered_at:string}[];items:ReviewItem[];briefs:Brief[];events:Event[];csrf:string;schedule:string;accounts:{email:string}[];counts:{email:string;inboxUnread:number;remaining:boolean}[];runs:Run[];undo:{key:string;state:string}[];message:string|null};
 const date=(iso:string)=>new Date(iso).toLocaleString('en-US',{timeZone:'America/Los_Angeles',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const mailLink=(key:string)=>'/gmail?key='+encodeURIComponent(key);
 function Dashboard(){
-  const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
-  const [tab,setTab]=useState('attention'),[selected,setSelected]=useState<string[]>([]),[account,setAccount]=useState('all');
-  async function refresh(){const r=await fetch('/api/review');if(!r.ok)throw new Error(r.status===403?'Your session expired. Reopen your private dashboard link.':'Could not load the review.');setData(await r.json() as Snapshot);}
-  useEffect(()=>{void refresh().catch(e=>setError((e as Error).message));},[]);
-  async function action(action:'keep'|'reviewed'|'archive'|'undo',keys:string[]){
-    if(!data || !keys.length)return;setBusy(true);setNotice('');
-    try{
-      const result:{ok:boolean;message:string}[]=[];
-      for(let i=0;i<keys.length;i+=50){
-        const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,keys:keys.slice(i,i+50),csrf:data.csrf})});
-        if(!r.ok)throw new Error('Action failed. Refresh to see completed changes before retrying.');
-        result.push(...await r.json() as {ok:boolean;message:string}[]);
-      }
-      setNotice(result.length===1?result[0]!.message:`${result.filter(x=>x.ok).length} of ${result.length} saved.${result.some(x=>!x.ok)?' Some items need another look in Recent activity.':''}`);setSelected([]);await refresh();
-    }
-    catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
-  }
-  const pending=data?.items.filter(x=>x.status==='pending'&&(account==='all'||x.email===account))??[];
-  const groups=[{id:'attention',label:'Questions',hint:'Only the decisions I need from you. I handle the rest.'},{id:'archive',label:'Ready to archive',hint:'Cleanup awaiting completion. I normally handle this automatically.'},{id:'record',label:'Records & other',hint:'Receipts, account notices, and mail kept for reference.'},{id:'history',label:'Recent activity',hint:'Your past decisions and a way to restore mail to the inbox.'}];
-  const inTab=(x:ReviewItem)=>tab==='record'?['record','keep','digest'].includes(x.category):x.category===tab;
-  const shown=tab==='history'?(data?.items.filter(x=>x.status!=='pending'&&(account==='all'||x.email===account))??[]):pending.filter(inTab);
-  const selectable=shown.filter(x=>!['archived','archiving','uncertain'].includes(x.status));
-  const last=data?.runs[0];
-  const renderItem=(item:ReviewItem)=>(<article className="card" key={item.key}>
-      <div className="card-meta"><span>{item.group}</span><time dateTime={item.receivedAt}>{date(item.receivedAt)} PT</time></div>
-      <div className="card-heading">{selectable.some(x=>x.key===item.key)&&<input aria-label={`Select ${item.subject}`} type="checkbox" checked={selected.includes(item.key)} disabled={busy} onChange={e=>setSelected(v=>e.target.checked?[...v,item.key]:v.filter(k=>k!==item.key))}/>}<h3>{item.subject||'(No subject)'}</h3></div>
-      <p className="summary">{item.summary}</p><p className="reason">{item.reason}</p>
-      <div className="source"><span>{item.from}</span><span>{item.email}</span></div>
-      {item.category==='attention'&&item.status==='pending'&&data&&<Answer itemKey={item.key} csrf={data.csrf} onSaved={refresh}/>}
-      {data?.answers.filter(x=>x.key===item.key).map(x=><p key={x.answered_at} className="answer-saved">Your answer: {x.answer}</p>)}
-      <div className="card-actions">{item.status==='pending'?<><button disabled={busy} onClick={()=>void action('keep',[item.key])}>Keep in inbox</button><button disabled={busy} onClick={()=>void action('reviewed',[item.key])}>Reviewed</button></>:<span className="status">{item.status==='following_up'?'I’m following up':item.status}</span>}{data?.undo.some(x=>x.key===item.key&&['archived','uncertain'].includes(x.state))&&<button disabled={busy} onClick={()=>void action('undo',[item.key])}>Restore to inbox</button>}<Original itemKey={item.key}/></div>
-    </article>);
-  return <main><header><a className="brand" href="/">mini me<span> / mail</span></a><a className="subtle-link" href="/accounts">Manage accounts ↗</a></header>
-    <section className="hero"><div><div className="eyebrow">YOUR MORNING, A LITTLE LIGHTER</div><h1>Less inbox.<br/><em>More headspace.</em></h1><p>Junk gets archived. Useful mail gets labels in Gmail. Only questions need you here.</p></div><aside className="schedule"><span className="dot"/> {data?.schedule??'Loading your review…'}<small>{last?`Last run: ${date(last.started_at)} PT · ${last.status}`:'Your first review will appear here.'}</small><small>{data?.accounts.length??0} mailboxes connected · {pending.length} items to review</small></aside></section>
-    {error&&<div role="alert" className="notice">{error}</div>}
-    {notice&&<div role="status" className="notice">{notice}</div>}
-    {data?.message&&<div className="notice">{data.message}</div>}
-    {last&&last.status!=='success'&&<div className="notice" role="status">{last.status==='running'?'A review is in progress. Reload to see new results.':last.detail}</div>}
-    {data?.counts.some(x=>x.remaining)&&<p className="coverage">The first inbox pass is still in progress. The reviewer keeps working through new mail and unresolved follow-ups.</p>}
-    <div className="toolbar"><nav aria-label="Review sections">{groups.map(g=><button key={g.id} className={tab===g.id?'tab active':'tab'} onClick={()=>{setTab(g.id);setSelected([]);}}>{g.label}<span>{g.id==='history'?data?.items.filter(x=>x.status!=='pending').length??0:pending.filter(x=>g.id==='record'?['record','keep','digest'].includes(x.category):x.category===g.id).length}</span></button>)}</nav><select aria-label="Mailbox" value={account} onChange={e=>{setAccount(e.target.value);setSelected([]);}}><option value="all">All mailboxes</option>{data?.accounts.map(a=><option key={a.email}>{a.email}</option>)}</select></div>
-    <div className="section-title"><div><h2>{groups.find(g=>g.id===tab)?.label}</h2><p>{groups.find(g=>g.id===tab)?.hint}</p></div>{selectable.length>0&&<div className="batch"><label><input type="checkbox" checked={selectable.every(x=>selected.includes(x.key))} onChange={e=>setSelected(e.target.checked?selectable.map(x=>x.key):[])}/> Select all</label><button className="primary" disabled={busy||!selected.length} onClick={()=>void action('archive',selected)}>Archive selected ({selected.length})</button></div>}</div>
-    {!data&&!error&&<div className="empty">Opening your morning review…</div>}
-    {data&&!shown.length&&<div className="empty"><span>✓</span><h3>Nothing waiting here.</h3><p>New items will appear after the next review.</p></div>}
-    <div className="cards">{tab==='attention'?shown.map(renderItem):groupMessages(shown).map(group=><details className="sender-group" key={group.key} open={group.items.length===1}><summary>{group.name} <span>{group.items.length} messages</span></summary>{group.items.map(renderItem)}</details>)}</div>
-    <footer>I read and organize your mail. Every archive can be restored. <span>Unread state is preserved.</span></footer>
-  </main>;
-}
-function Original({itemKey}:{itemKey:string}){
- const [content,setContent]=useState<{text:string;textTruncated:boolean}|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
- async function load(){if(content||loading)return;setLoading(true);setError('');try{const r=await fetch('/api/message?key='+encodeURIComponent(itemKey));if(!r.ok)throw new Error('Could not load the original. Check the mailbox connection.');setContent(await r.json() as {text:string;textTruncated:boolean});}catch(e){setError((e as Error).message);}finally{setLoading(false);}}
- return <details className="original" onToggle={e=>{if(e.currentTarget.open)void load();}}><summary>Read original</summary>{loading?<p>Loading…</p>:error?<p>{error}</p>:<><p>Plain text · Gmail unread state preserved · Attachments omitted{content?.textTruncated?' · Long message truncated':''}</p><pre>{content?.text}</pre></>}</details>;
+ const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
+ const [tab,setTab]=useState('brief'),[selected,setSelected]=useState<string[]>([]),[account,setAccount]=useState('all'),[run,setRun]=useState('all'),[briefId,setBriefId]=useState('');
+ async function refresh(){const r=await fetch('/api/review');if(!r.ok)throw Error(r.status===403?'Your session expired. Reopen your private dashboard link.':'Could not load the review.');setData(await r.json() as Snapshot);}
+ useEffect(()=>{void refresh().catch(e=>setError((e as Error).message));const timer=setInterval(()=>void refresh().catch(()=>{}),30000);return()=>clearInterval(timer);},[]);
+ async function action(action:'reviewed'|'archive'|'undo',keys:string[]){
+  if(!data||!keys.length)return;setBusy(true);setNotice('');
+  try{const results:{ok:boolean;message:string}[]=[];for(let i=0;i<keys.length;i+=50){const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,keys:keys.slice(i,i+50),csrf:data.csrf})});if(!r.ok)throw Error('Action interrupted. Refresh to see completed changes.');results.push(...await r.json() as {ok:boolean;message:string}[]);}
+   setNotice(`${results.filter(x=>x.ok).length} of ${results.length} saved.${results.some(x=>!x.ok)?' Some changes could not be confirmed.':''}`);setSelected([]);await refresh();
+  }catch(e){setNotice((e as Error).message);}finally{setBusy(false);}
+ }
+ const items=data?.items??[],questions=items.filter(x=>x.category==='attention'&&x.status==='pending'&&(account==='all'||x.email===account));
+ const briefs=data?.briefs??[],brief=briefs.find(x=>x.id===briefId)??briefs[0];
+ const last=data?.runs[0];
+ const byKey=new Map(items.map(item=>[item.key,item]));
+ const events=(data?.events??[]).filter(e=>(run==='all'||e.run_id===run)&&(account==='all'||byKey.get(e.key)?.email===account));
+ const history=items.filter(x=>x.status!=='pending'&&(account==='all'||x.email===account));
+ const selectable=(tab==='questions'?questions:tab==='history'?history:[]).filter(x=>!['archived','archiving','uncertain'].includes(x.status));
+ return <main><header><a className="brand" href="/">mini me<span> / daily</span></a><a className="subtle-link" href="/accounts">Manage accounts ↗</a></header>
+  <section className="hero"><div><div className="eyebrow">A LITTLE ORDER. A LITTLE DISCOVERY.</div><h1>Your inbox,<br/><em>with a head start.</em></h1><p>Read and act in Gmail. Catch up with me here.</p></div><aside className="schedule"><span className="dot"/>{data?.schedule??'Loading…'}<small>{data?.accounts.length??0} mailboxes connected</small><small>{last?`Latest review: ${date(last.started_at)} PT · ${last.status}`:'Your first brief is on its way.'}</small></aside></section>
+  {error&&<p className="notice" role="alert">{error}</p>}{notice&&<p className="notice" role="status">{notice}</p>}
+  {last?.status==='running'&&<p className="coverage">A review is underway. Confirmed actions appear in the run log as they happen.</p>}
+  {(data?.counts.some(x=>x.remaining)||items.some(x=>x.status==='pending'&&x.summary==='Awaiting personal review.'))&&<p className="coverage">The initial backlog is still being reviewed. Each brief reports its actual coverage.</p>}
+  <details className="gmail-shortcuts"><summary>Your Gmail inboxes & labels</summary><section className="gmail-shelf" aria-label="Your Gmail inboxes">{data?.accounts.map(a=><div key={a.email}><a className="gmail-inbox" href={'/gmail?email='+encodeURIComponent(a.email)} target="_blank" rel="noreferrer">{a.email} ↗</a><div className="gmail-tags">{['Read','Action','Records','Updates','Waiting'].map(label=><a key={label} href={'/gmail?email='+encodeURIComponent(a.email)+'&label='+encodeURIComponent('Mini-me/'+label)} target="_blank" rel="noreferrer">{label}</a>)}</div></div>)}</section></details>
+  <div className="toolbar"><nav aria-label="Review sections">{[{id:'brief',name:'Daily brief'},{id:'questions',name:'Questions'},{id:'log',name:'Run log'},{id:'history',name:'Archive & history'}].map(t=><button key={t.id} className={tab===t.id?'tab active':'tab'} onClick={()=>{setTab(t.id);setSelected([]);}}>{t.name}{t.id==='questions'&&<span>{questions.length}</span>}</button>)}</nav>{tab!=='brief'&&<select aria-label="Mailbox" value={account} onChange={e=>{setAccount(e.target.value);setSelected([]);}}><option value="all">All mailboxes</option>{data?.accounts.map(a=><option key={a.email}>{a.email}</option>)}</select>}</div>
+  {tab==='brief'&&<section className="daily-brief"><div className="section-title"><h2>Daily brief</h2>{briefs.length>1&&<select aria-label="Past briefs" value={brief?.id??''} onChange={e=>setBriefId(e.target.value)}>{briefs.map(b=><option key={b.id} value={b.id}>{date(b.created_at)} · {b.title}</option>)}</select>}</div>{brief?<article className="brief-paper"><div className="eyebrow">{date(brief.created_at)} PT</div><h2>{brief.title}</h2><BriefText text={brief.body}/>{brief.run_id&&<button onClick={()=>{setRun(brief.run_id!);setTab('log');}}>See this run’s log</button>}</article>:<div className="empty"><h3>Your first dispatch is brewing.</h3><p>A useful recap, a few good finds when there are any, and only real questions. No filler required.</p></div>}</section>}
+  {tab==='log'&&<section><div className="section-title"><div><h2>Run log</h2><p>Confirmed actions, unresolved outcomes, and the reasons behind them.</p></div><select aria-label="Review run" value={run} onChange={e=>setRun(e.target.value)}><option value="all">All runs and manual actions</option>{data?.runs.map(r=><option key={r.id} value={r.id}>{date(r.started_at)} · {r.status}</option>)}</select></div><div className="run-summaries">{data?.runs.filter(r=>run==='all'||r.id===run).map(r=><details key={r.id}><summary>{date(r.started_at)} · {r.status} · {r.processed} reviewed</summary><p>{r.detail}</p></details>)}</div>{!events.length&&<p className="empty">No action events recorded for this selection. Older cleanup is available in Archive & history.</p>}<ol className="event-log">{events.map(e=>{const item=byKey.get(e.key);return <li key={e.id}><div className="card-meta"><span>{e.action} · {e.state}</span><time>{date(e.created_at)} PT</time></div><h3>{item?<a href={mailLink(e.key)} target="_blank" rel="noreferrer">{item.subject} ↗</a>:e.action}</h3><p>{e.detail}</p><small>{item?.email}</small></li>;})}</ol></section>}
+  {(tab==='questions'||tab==='history')&&<section><div className="section-title"><div><h2>{tab==='questions'?'Questions':'Archive & history'}</h2><p>{tab==='questions'?'Only what needs your judgment. Answers help me learn.':'Past decisions and a way to bring archived mail back.'}</p></div>{selectable.length>0&&<div className="batch"><label><input type="checkbox" checked={selectable.every(x=>selected.includes(x.key))} onChange={e=>setSelected(e.target.checked?selectable.map(x=>x.key):[])}/> Select all</label><button className="primary" disabled={busy||!selected.length} onClick={()=>void action('archive',selected)}>Archive selected ({selected.length})</button></div>}</div><div className="cards">{(tab==='questions'?questions:history).map(item=><article className="card" key={item.key}><div className="card-meta"><span>{item.status==='following_up'?'I’m following up':item.status}</span><time>{date(item.receivedAt)} PT</time></div><div className="card-heading">{selectable.some(x=>x.key===item.key)&&<input type="checkbox" aria-label={`Select ${item.subject}`} checked={selected.includes(item.key)} disabled={busy} onChange={e=>setSelected(v=>e.target.checked?[...v,item.key]:v.filter(k=>k!==item.key))}/>}<h3>{item.subject}</h3></div>{tab==='history'&&item.category==='attention'?<><p className="summary">Question closed. No answer needed.</p><details className="past-question"><summary>Past question and context</summary><p>{item.summary}</p><p>{item.reason}</p></details></>:<><p className="summary">{item.summary}</p><p className="reason">{item.reason}</p></>}<div className="source"><span>{item.email}</span><a href={mailLink(item.key)} target="_blank" rel="noreferrer">Open in Gmail ↗</a></div>{tab==='questions'&&data&&<Answer itemKey={item.key} csrf={data.csrf} onSaved={refresh}/>}<div className="card-actions">{tab==='questions'&&<button disabled={busy} onClick={()=>void action('reviewed',[item.key])}>Already handled</button>}{data?.undo.some(x=>x.key===item.key&&['archived','uncertain'].includes(x.state))&&<button disabled={busy} onClick={()=>void action('undo',[item.key])}>Restore to inbox</button>}</div></article>)}</div>{!(tab==='questions'?questions:history).length&&<div className="empty">{tab==='questions'?'Nothing I need to ask right now.':'No history for this mailbox yet.'}</div>}</section>}
+  <footer>Organized in Gmail. Explained here. <span>Unread state stays yours. Archives can be restored.</span></footer>
+ </main>;
 }
 
 function Answer({itemKey,csrf,onSaved}:{itemKey:string;csrf:string;onSaved:()=>Promise<void>}){

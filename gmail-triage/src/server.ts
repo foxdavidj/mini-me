@@ -10,6 +10,7 @@ import { GmailReader } from "./mail";
 import { Reviews } from "./review";
 import { act } from "./actions";
 import { nonceContext } from "./nonce.server";
+import { gmailDestination } from './gmail-link';
 
 process.umask(0o077);
 const dataDir=process.env.MINI_ME_DATA_DIR ?? DEFAULT_DATA;
@@ -19,6 +20,13 @@ const actionSchema=z.object({action:z.enum(["keep","reviewed","archive","undo"])
 const app=createApp({config,store,google:googleAuth(config),accessKey:accessKey(dataDir),css:readFileSync(join(process.cwd(),"static/style.css"),"utf8"),
   dashboard:async(request,session)=>{
     const path=new URL(request.url).pathname;
+    if(path==='/gmail'&&request.method==='GET') {
+      const params=new URL(request.url).searchParams,key=params.get('key');
+      if(key){const item=reviews.items().find(x=>x.key===key);if(!item)return new Response('Not found',{status:404});return Response.redirect(gmailDestination(item.email,item.threadId),302);}
+      const email=params.get('email'),label=params.get('label')??undefined;
+      if(!email||!store.accounts().some(x=>x.email===email)||label&&!label.startsWith('Mini-me/'))return new Response('Not found',{status:404});
+      return Response.redirect(gmailDestination(email,undefined,label),302);
+    }
     if (path==='/api/review' && request.method==='GET') return Response.json({...reviews.snapshot(),csrf:session.csrf,message:session.message});
     if (path==='/api/message' && request.method==='GET') {
       const key=new URL(request.url).searchParams.get('key');

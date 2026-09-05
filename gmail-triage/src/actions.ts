@@ -9,6 +9,7 @@ export async function act(reviews:Reviews, action:"keep"|"reviewed"|"archive"|"u
     if (!item) { results.push({key,ok:false,message:"Item no longer available."});continue; }
     if (action === "keep" || action === "reviewed") {
       const result=reviews.store.db.query("UPDATE review_items SET status=? WHERE email=? AND id=? AND status='pending'").run(action==='keep'?'kept':'reviewed',item.email,item.id);
+      if(result.changes)reviews.log(key,action,'confirmed','User decision saved; Gmail unchanged.');
       results.push({key,ok:Boolean(result.changes),message:result.changes ? "Saved. Gmail is unchanged." : "Item already handled; refresh the queue."});continue;
     }
     results.push(await changeInbox(reviews,item,action,client));
@@ -35,10 +36,12 @@ async function changeInbox(reviews:Reviews,item:ReviewItem,action:"archive"|"und
       db.query("UPDATE archive_actions SET state=?,updated_at=? WHERE key=?").run(state,new Date().toISOString(),key);
       reviews.status(item.email,item.id,action==='undo'?'kept':state==='skipped'?'reviewed':'archived');
     })();
+    reviews.log(key,action,state,action==='undo'?'Restored to inbox at your request.':state==='skipped'?'Already outside the inbox; no change made.':item.reason);
     return {key,ok:true,message:action==='undo'?'Restored to inbox.':result==='changed'?'Archived. Unread state preserved.':'Already outside inbox; no change made.'};
   } catch {
     db.query("UPDATE archive_actions SET state='uncertain',updated_at=? WHERE key=?").run(new Date().toISOString(),key);
     reviews.status(item.email,item.id,'uncertain');
+    reviews.log(key,action,'uncertain','Gmail response unconfirmed; review or restore before retrying.');
     return {key,ok:false,message:"Could not confirm Gmail’s response. Check Gmail or use Restore to inbox."};
   }
 }

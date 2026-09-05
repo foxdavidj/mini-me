@@ -7,6 +7,7 @@ import { Reviews, itemKey } from '../src/review';
 import { act } from '../src/actions';
 import { dueDay } from '../src/schedule';
 import { GmailReader } from '../src/mail';
+import { finishReview } from '../src/run-review';
 
 const paths:string[]=[];afterEach(()=>{for(const p of paths.splice(0))rmSync(p,{recursive:true,force:true});});
 function setup(){const path=mkdtempSync(join(tmpdir(),'mini-me-review-'));paths.push(path);const store=new Store(path),r=new Reviews(store);const message={id:'m1',threadId:'t1',from:'Sender',to:'me',subject:'Sale',receivedAt:'2026-09-04T00:00:00Z',text:'An optional sale',snippet:'',labels:['INBOX','UNREAD'],textTruncated:false,listId:''};const c={id:'m1',category:'archive' as const,summary:'Optional sale',reason:'Promotion',group:'Offers'};r.start('r1');r.save('one@example.com',[message],[c],'r1');return {store,r,message,c,path};}
@@ -60,4 +61,44 @@ test('answers preserve the exact question across restarts and reject stale submi
  expect(snapshot.answers).toHaveLength(1);
  expect(snapshot.answers[0]).toMatchObject({key,question:'Which account should stay active?',answer:'Keep the work account.'});
  expect(snapshot.items.find(x=>x.key===key)?.status).toBe('answered');reopened.close();
+});
+
+test('brief history survives restart and atomically records honest partial coverage',()=>{
+ const {store,r,path}=setup();
+ r.log(itemKey('one@example.com','m1'),'archive','confirmed','Removed INBOX','r1');
+ const id=r.publishBrief({runId:'r1',title:'A little more breathing room',body:'Reviewed one message. More remain.',reviewed:1,status:'partial'});
+ expect(()=>r.publishBrief({runId:'missing',title:'No',body:'No',reviewed:99,status:'success'})).toThrow();
+ expect(()=>r.publishBrief({runId:'r1',title:' ',body:'Empty title',reviewed:1,status:'success'})).toThrow();
+ store.close();
+ const reopened=new Store(path),snapshot=new Reviews(reopened).snapshot();
+ expect(snapshot.briefs).toHaveLength(1);
+ expect(snapshot.briefs[0]).toMatchObject({id,run_id:'r1',body:'Reviewed one message. More remain.'});
+ expect(snapshot.runs[0]).toMatchObject({status:'partial',processed:1});
+ expect(snapshot.events[0]).toMatchObject({run_id:'r1',action:'archive',state:'confirmed'});
+ reopened.close();
+});
+
+test('action log distinguishes unconfirmed Gmail outcomes from successful restores',async()=>{
+ const {store,r}=setup(),key=itemKey('one@example.com','m1');
+ await act(r,'archive',[key],()=>({verify:async()=>{},inbox:async()=>{throw Error('Lost response');}}));
+ await act(r,'undo',[key],()=>({verify:async()=>{},inbox:async()=> 'changed' as const}));
+ const events=r.snapshot().events;
+ expect(events).toHaveLength(2);
+ expect(events[0]).toMatchObject({action:'undo',state:'restored'});
+ expect(events[1]).toMatchObject({action:'archive',state:'uncertain'});
+ store.close();
+});
+
+
+test('scheduled completion requires a published brief and preserves coverage if interrupted afterward',()=>{
+ const {store,r}=setup();
+ expect(finishReview(r,'r1',0)).toBe(false);
+ expect(r.snapshot().runs[0]).toMatchObject({status:'failed'});
+ r.publishBrief({runId:'r1',title:'Part one',body:'More remains.',reviewed:12,status:'partial'});
+ expect(finishReview(r,'r1',0)).toBe(true);
+ expect(r.snapshot().runs[0]).toMatchObject({status:'partial',processed:12});
+ expect(finishReview(r,'r1',1)).toBe(false);
+ expect(r.snapshot().runs[0]).toMatchObject({status:'failed',processed:12});
+ expect(r.snapshot().briefs).toHaveLength(1);
+ store.close();
 });

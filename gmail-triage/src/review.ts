@@ -35,6 +35,8 @@ export class Reviews {
       CREATE TABLE IF NOT EXISTS question_answers (id INTEGER PRIMARY KEY, key TEXT NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, answered_at TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS review_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS label_actions (key TEXT PRIMARY KEY, labels TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS review_events (id INTEGER PRIMARY KEY, run_id TEXT, key TEXT NOT NULL, action TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
+      CREATE TABLE IF NOT EXISTS daily_briefs (id TEXT PRIMARY KEY, run_id TEXT, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
     `);
   }
   setting(key: string) { return this.store.db.query<{value:string},[string]>("SELECT value FROM review_settings WHERE key=?").get(key)?.value; }
@@ -42,6 +44,19 @@ export class Reviews {
   known(email: string) { return new Set(this.store.db.query<{id:string},[string]>("SELECT id FROM review_items WHERE email=?").all(email).map(x=>x.id)); }
   start(id: string) { this.store.db.query("INSERT INTO review_runs(id,started_at,status) VALUES (?,?,'running')").run(id,new Date().toISOString()); }
   finish(id:string,status:string,detail:string,count:number) { this.store.db.query("UPDATE review_runs SET finished_at=?,status=?,detail=?,processed=? WHERE id=?").run(new Date().toISOString(),status,detail,count,id); }
+  log(key:string,action:string,state:string,detail:string,runId=process.env.MINI_ME_REVIEW_RUN_ID??null) {
+    this.store.db.query('INSERT INTO review_events(run_id,key,action,state,detail,created_at) VALUES (?,?,?,?,?,?)').run(runId,key,action,state,detail,new Date().toISOString());
+  }
+  publishBrief(input:{runId?:string;title:string;body:string;reviewed:number;status:'success'|'partial'}) {
+    const data=z.object({runId:z.string().optional(),title:z.string().trim().min(1).max(180),body:z.string().trim().min(1).max(50000),reviewed:z.number().int().min(0),status:z.enum(['success','partial'])}).strict().parse(input);
+    const id=crypto.randomUUID(),now=new Date().toISOString();
+    this.store.db.transaction(()=>{
+      if(data.runId&&!this.store.db.query('SELECT id FROM review_runs WHERE id=?').get(data.runId))throw Error('Unknown run');
+      this.store.db.query('INSERT INTO daily_briefs VALUES (?,?,?,?,?)').run(id,data.runId??null,data.title,data.body,now);
+      if(data.runId)this.finish(data.runId,data.status,data.title,data.reviewed);
+    })();
+    return id;
+  }
   save(email:string,messages:InspectedMessage[],results:Classification[],runId:string) {
     const ids = new Set(messages.map(x=>x.id));
     if (results.length !== messages.length || new Set(results.map(x=>x.id)).size !== messages.length || results.some(x=>!ids.has(x.id))) throw new Error("Review IDs do not match source messages");
@@ -65,6 +80,7 @@ export class Reviews {
       if(!item)throw Error('Question is no longer pending');
       this.store.db.query('INSERT INTO question_answers(key,question,answer,answered_at) VALUES (?,?,?,?)').run(key,item.summary,answer,new Date().toISOString());
       this.status(item.email,item.id,'answered');
+      this.log(key,'answer','confirmed','Saved your answer for the next review.');
     })();
   }
   snapshot() {
@@ -76,9 +92,11 @@ export class Reviews {
     })();
     return {
       items:this.items(),
+      briefs:this.store.db.query('SELECT * FROM daily_briefs ORDER BY created_at DESC LIMIT 30').all(),
+      events:this.store.db.query('SELECT * FROM review_events ORDER BY id DESC').all(),
       labelActions:this.store.db.query("SELECT key,labels,state,updated_at FROM label_actions ORDER BY updated_at DESC").all(),
       answers:this.store.db.query("SELECT key,question,answer,answered_at FROM question_answers ORDER BY id DESC").all(),
-      runs:this.store.db.query("SELECT * FROM review_runs ORDER BY started_at DESC LIMIT 8").all(),
+      runs:this.store.db.query("SELECT * FROM review_runs ORDER BY started_at DESC LIMIT 100").all(),
       accounts:this.store.accounts().map(x=>({email:x.email})),
       schedule:this.setting("schedule") ?? "Not scheduled",
       counts:JSON.parse(this.setting("counts") ?? "[]") as {email:string;inboxUnread:number;allUnread:number;remaining:boolean}[],

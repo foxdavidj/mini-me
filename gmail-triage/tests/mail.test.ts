@@ -83,3 +83,13 @@ test("an import failure waits for other reads to persist before returning", asyn
   expect(await outcome).toBe(error);
   expect(saved).toEqual(["good"]);
 });
+
+test('explicit HTML reading recovers content hidden by a plain-text preheader',()=>{
+ const source={...base,payload:{mimeType:'multipart/alternative',parts:[
+  {mimeType:'text/plain',body:{data:data('View this email online')}},
+  {mimeType:'text/html',body:{data:data('<p>Your appointment is tomorrow.</p><script>alert(1)</script><img src="https://example.com/track">')}},
+ ]}};
+ expect(decodeMessage(source).text).toBe('View this email online');
+ expect(decodeMessage(source,true).text).toBe('Your appointment is tomorrow.');
+ expect(decodeMessage({...base,payload:{mimeType:'text/plain',body:{data:data('Plain only')}}},true).text).toBe('Plain only');
+});

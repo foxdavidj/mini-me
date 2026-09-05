@@ -37,11 +37,11 @@ function bodies(part: Part): { plain: string[]; html: string[] } {
   return result;
 }
 
-export function decodeMessage(input: unknown) {
+export function decodeMessage(input: unknown, preferHtml = false) {
   const message = messageSchema.parse(input);
   const header = (name: string) => message.payload.headers.find((h) => h.name.toLowerCase() === name)?.value ?? "";
   const content = bodies(message.payload);
-  const fullText = content.plain.length ? content.plain.join("\n\n") : convert(content.html.join("\n"), {
+  const fullText = content.plain.length && !(preferHtml && content.html.length) ? content.plain.join("\n\n") : convert(content.html.join("\n"), {
     wordwrap: false, selectors: [{ selector: "a", options: { ignoreHref: true } }, { selector: "img", format: "skip" }],
   });
   return {
@@ -139,7 +139,7 @@ export class GmailReader {
     return {email:this.email,inboxUnread:inbox.messagesUnread,allUnread:unread.messagesTotal,remaining,messages};
   }
 
-  async message(id: string) { return decodeMessage(await this.get(`messages/${encodeURIComponent(id)}`, {format:"full"})); }
+  async message(id: string, preferHtml = false) { return decodeMessage(await this.get(`messages/${encodeURIComponent(id)}`, {format:"full"}), preferHtml); }
 
   async labels() {
     return z.object({ labels: z.array(gmailLabelSchema).default([]) }).parse(await this.get('labels')).labels;

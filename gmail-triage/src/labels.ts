@@ -14,9 +14,11 @@ export async function tagMail(reviews:Reviews,item:ReviewItem,names:string[],cli
   try {
     const result=await client.tag(item.id,names);
     reviews.store.db.query("UPDATE label_actions SET state='confirmed',updated_at=? WHERE key=?").run(new Date().toISOString(),item.key);
+    reviews.log(item.key,'label','confirmed',`${result.labels.map(x=>x.name).join(', ')}. ${item.reason}`);
     return {key:item.key,ok:true,labels:result.labels.map(x=>x.name)};
   } catch {
     reviews.store.db.query("UPDATE label_actions SET state='uncertain',updated_at=? WHERE key=?").run(new Date().toISOString(),item.key);
+    reviews.log(item.key,'label','uncertain','Could not confirm Gmail labels; safe to retry.');
     return {key:item.key,ok:false,labels:names};
   }
 }
