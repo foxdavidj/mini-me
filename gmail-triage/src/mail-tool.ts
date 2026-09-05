@@ -19,12 +19,11 @@ try{
  if(command==='ingest'){
   const counts=[];
   for(const {email} of store.accounts()){
-   const result=await reader(email).unseen(reviews.known(email),500);
-   counts.push({email,inboxUnread:result.inboxUnread,allUnread:result.allUnread,remaining:result.remaining});
-   for(const message of result.messages){
+   const result=await reader(email).unseen(reviews.known(email),500,message=>{
     privateWrite(pathFor(itemKey(email,message.id)),JSON.stringify({email,...message},null,2));
     reviews.save(email,[message],[{id:message.id,category:'keep',group:message.from,summary:'Awaiting personal review.',reason:'No triage decision has been made.'}],'ingestion');
-   }
+   });
+   counts.push({email,inboxUnread:result.inboxUnread,allUnread:result.allUnread,remaining:result.remaining});
   }
   for(const item of reviews.items().filter(x=>['pending','answered','following_up'].includes(x.status)))if(!await Bun.file(pathFor(item.key)).exists())privateWrite(pathFor(item.key),JSON.stringify({email:item.email,...await reader(item.email).message(item.id)},null,2));
   reviews.set('counts',JSON.stringify(counts));

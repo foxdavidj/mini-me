@@ -55,6 +55,21 @@ export function decodeMessage(input: unknown) {
 
 export type InspectedMessage = ReturnType<typeof decodeMessage>;
 
+const nextRead = new Map<string, number>();
+const pause = (ms:number) => new Promise<void>(resolve=>setTimeout(resolve,ms));
+export async function readWithBackoff<T>(request:()=>Promise<T>, sleep=pause):Promise<T> {
+  for(let attempt=0;;attempt++) {
+    try { return await request(); }
+    catch(error) {
+      const e=error as {response?:{status?:number;data?:{error?:{errors?:{reason?:string}[]}}}};
+      const status=e.response?.status;
+      const rateLimited=status===429 || (status===403 && e.response?.data?.error?.errors?.some(x=>['rateLimitExceeded','userRateLimitExceeded'].includes(x.reason??'')));
+      if(attempt>=6 || (!rateLimited && ![500,502,503,504].includes(status??0)))throw error;
+      await sleep(Math.min(32000,1000*2**attempt)+Math.floor(Math.random()*500));
+    }
+  }
+}
+
 /** Only Gmail GET operations are exposed. Token refresh writes only local credentials. */
 export class GmailReader {
   private readonly oauth: OAuth2Client;
@@ -76,7 +91,12 @@ export class GmailReader {
   }
 
   private async get(path: string, params: Record<string, string | number> = {}): Promise<unknown> {
-    const response = await this.oauth.request<unknown>({ method: "GET", url: `https://gmail.googleapis.com/gmail/v1/users/me/${path}`, params });
+    const response = await readWithBackoff(async()=>{
+      // New projects have 6,000 units/user/minute; message reads cost 20.
+      const at=Math.max(Date.now(),nextRead.get(this.email)??0);nextRead.set(this.email,at+300);
+      await pause(Math.max(0,at-Date.now()));
+      return this.oauth.request<unknown>({ method: "GET", url: `https://gmail.googleapis.com/gmail/v1/users/me/${path}`, params });
+    });
     return response.data;
   }
 
@@ -85,7 +105,7 @@ export class GmailReader {
     if (profile.emailAddress.toLowerCase() !== this.email) throw new Error("Connected mailbox identity mismatch");
   }
 
-  async unseen(known: Set<string>, limit = 60) {
+  async unseen(known: Set<string>, limit = 60, onMessage?:(message:InspectedMessage)=>void) {
     await this.verify();
     const inbox = labelSchema.parse(await this.get("labels/INBOX"));
     const unread = labelSchema.parse(await this.get("labels/UNREAD"));
@@ -103,7 +123,16 @@ export class GmailReader {
     const messages: InspectedMessage[] = [];
     for (let start = 0; start < Math.min(ids.length,limit); start += 4) {
       const batch=ids.slice(start,Math.min(start+4,limit));
-      messages.push(...await Promise.all(batch.map(id=>this.message(id))));
+      // Drain the batch before reporting failure so callbacks cannot outlive the store.
+      const results = await Promise.allSettled(batch.map(async id => {
+        const message = await this.message(id);
+        onMessage?.(message);
+        return message;
+      }));
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason;
+        messages.push(result.value);
+      }
     }
     return {email:this.email,inboxUnread:inbox.messagesUnread,allUnread:unread.messagesTotal,remaining,messages};
   }
