@@ -6,6 +6,7 @@ import { GmailReader } from '../src/mail';
 import { Store } from '../src/store';
 import { Reviews } from '../src/review';
 import { completeLabeledReview, tagMail } from '../src/labels';
+import { act } from '../src/actions';
 
 function mailbox(initial:string[]) {
   const reader=Object.create(GmailReader.prototype) as GmailReader;
@@ -15,7 +16,7 @@ function mailbox(initial:string[]) {
   Object.assign(reader,{verify:async()=>{},get:async(path:string)=>path==='labels'?{labels}:{labelIds:messageLabels},oauth:{request:async(request:{url:string;data:Record<string,unknown>})=>{
     writes.push(request);
     if(request.url.endsWith('/labels')) {const label={id:'created-read',name:request.data.name as string,type:'user'};labels.push(label);return {data:label};}
-    messageLabels=[...new Set([...messageLabels,...request.data.addLabelIds as string[]])];return {data:{labelIds:messageLabels}};
+    messageLabels=[...new Set([...messageLabels,...(request.data.addLabelIds as string[]??[])])].filter(x=>!(request.data.removeLabelIds as string[]??[]).includes(x));return {data:{labelIds:messageLabels}};
   }}});
   return {reader,writes,state:()=>messageLabels};
 }
@@ -59,4 +60,27 @@ test('unconfirmed label writes remain retryable and do not replace a user decisi
     completeLabeledReview(reviews,item,'Resolved and labeled for reference');
     expect(reviews.items()[0]?.status).toBe('tagged');
   } finally {store.close();rmSync(path,{recursive:true,force:true});}
+});
+
+
+test('explicit completed labeling can archive while preserving labels, unread state and user decisions',async()=>{
+ const path=mkdtempSync(join(tmpdir(),'mini-me-file-')),store=new Store(path),reviews=new Reviews(store);
+ try{
+  const message={id:'one',threadId:'thread',from:'Sender',to:'me',subject:'Receipt',receivedAt:'2026-09-04T00:00:00Z',text:'Paid',snippet:'',labels:['INBOX','UNREAD'],textTruncated:false,listId:''};
+  reviews.save('me@example.com',[message],[{id:'one',category:'keep',group:'Sender',summary:'Receipt',reason:'Paid record'}],'test');
+  const item=reviews.items()[0]!,client=mailbox(['INBOX','UNREAD','personal-label']);
+  expect((await tagMail(reviews,item,['Mini-me/Records'],client.reader)).ok).toBe(true);
+  expect(completeLabeledReview(reviews,item,'Labeled record ready to file')).toBe(true);
+  expect((await act(reviews,'archive',[item.key],()=>client.reader))[0]?.ok).toBe(true);
+  expect(client.state()).toEqual(['UNREAD','personal-label','existing-records']);
+  expect(reviews.items()[0]?.category).toBe('keep');
+  for(const status of ['kept','reviewed','archived']){
+   reviews.status(item.email,item.id,status);
+   expect(completeLabeledReview(reviews,item,'Should not override')).toBe(false);
+   expect(reviews.items()[0]?.status).toBe(status);
+  }
+  store.db.query("UPDATE review_items SET status='pending',classification=json_set(classification,'$.category','attention')").run();
+  expect(completeLabeledReview(reviews,item,'Question remains open')).toBe(false);
+  expect(reviews.items()[0]?.status).toBe('pending');
+ }finally{store.close();rmSync(path,{recursive:true,force:true});}
 });

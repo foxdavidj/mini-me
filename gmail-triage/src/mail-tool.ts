@@ -15,7 +15,7 @@ const {values}=parseArgs({args:Bun.argv.slice(3),options:{key:{type:'string'},em
 const store=new Store(DEFAULT_DATA),reviews=new Reviews(store),config=readConfig(join(DEFAULT_DATA,'client_secret.json'));
 const pathFor=(key:string)=>join(DEFAULT_DATA,'mail',hash(key)+'.json');
 const reader=(email:string)=>new GmailReader(config,store,email);
-const decisionSchema=z.object({runId:z.string().optional(),items:z.array(z.object({key:z.string(),action:z.enum(['archive','question','keep','label']),reason:z.string().min(1),question:z.string().optional(),labels:z.array(assistantLabelName).min(1).max(8).optional(),complete:z.boolean().optional()}).strict()).max(1000)}).strict();
+const decisionSchema=z.object({runId:z.string().optional(),items:z.array(z.object({key:z.string(),action:z.enum(['archive','question','keep','label']),reason:z.string().min(1),question:z.string().optional(),labels:z.array(assistantLabelName).min(1).max(8).optional(),complete:z.boolean().optional(),archive:z.boolean().optional()}).strict()).max(1000)}).strict();
 try{
  if(command==='ingest'){
   const counts=[];
@@ -52,7 +52,7 @@ try{
   if(new Set(plan.items.map(x=>x.key)).size!==plan.items.length)throw Error('Duplicate decisions');
   // Validate the complete plan before applying any part.
   const items=reviews.items();
-  for(const decision of plan.items){if(!items.some(x=>x.key===decision.key))throw Error('Unknown message');if(decision.action==='question'&&!decision.question?.trim())throw Error('A question needs question text');if(decision.action!=='archive'&&!decision.labels?.length)throw Error('Useful mail needs Gmail labels');}
+  for(const decision of plan.items){if(!items.some(x=>x.key===decision.key))throw Error('Unknown message');if(decision.action==='question'&&!decision.question?.trim())throw Error('A question needs question text');if(decision.action!=='archive'&&!decision.labels?.length)throw Error('Useful mail needs Gmail labels');if(decision.archive&&(decision.action!=='label'||decision.complete===false))throw Error('Archiving after labeling requires a completed label decision');}
   privateWrite(join(DEFAULT_DATA,'reports',`agent-decisions-${Date.now()}.json`),JSON.stringify(plan,null,2));
   const archives=[];
   const tagged:{key:string;ok:boolean;labels:string[]}[]=[];
@@ -62,7 +62,7 @@ try{
    if(decision.action!=='label'&&!['pending','answered','following_up'].includes(item.status))continue;
    if(decision.labels){const result=await tagMail(reviews,{...item,reason:decision.reason},decision.labels,reader(item.email));tagged.push(result);if(!result.ok)continue;}
    if(decision.action==='label'){
-    if(decision.complete!==false)completeLabeledReview(reviews,item,decision.reason);
+    if(decision.complete!==false){const completed=completeLabeledReview(reviews,item,decision.reason);if(completed&&decision.archive)archives.push(item.key);}
     continue;
    }
    const classification={id:item.id,category:decision.action==='question'?'attention':decision.action==='archive'?'archive':'keep',group:item.group,summary:decision.action==='question'?decision.question:decision.reason,reason:decision.reason};

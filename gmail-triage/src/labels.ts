@@ -4,7 +4,8 @@ export type LabelClient = {tag(id:string,names:string[]):Promise<{labels:{id:str
 
 export function completeLabeledReview(reviews:Reviews,item:ReviewItem,reason:string) {
   // Useful mail is now handled in Gmail. Preserve explicit user decisions and unanswered questions.
-  reviews.store.db.query("UPDATE review_items SET status='tagged',classification=? WHERE email=? AND id=? AND status IN ('pending','answered','following_up','tagged') AND NOT (status='pending' AND json_extract(classification,'$.category')='attention')").run(JSON.stringify({id:item.id,category:'keep',group:item.group,summary:reason,reason}),item.email,item.id);
+  const changed=reviews.store.db.query("UPDATE review_items SET status='tagged',classification=? WHERE email=? AND id=? AND status IN ('pending','answered','following_up','tagged') AND NOT (status='pending' AND json_extract(classification,'$.category')='attention')").run(JSON.stringify({id:item.id,category:'keep',group:item.group,summary:reason,reason}),item.email,item.id);
+  return Boolean(changed.changes);
 }
 
 // Additive and safe to retry. A failed request never marks the review complete.
